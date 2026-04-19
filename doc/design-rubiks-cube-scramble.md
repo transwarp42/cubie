@@ -2,22 +2,35 @@
 
 ## 0. Renderingkeuze
 
-De applicatie gebruikt **unlit rendering** (via `MeshMaterial3d` met onverlichte kleuren). Dit garandeert:
+De applicatie gebruikt **volledig unlit rendering** (via `StandardMaterial { unlit: true }` op alle materialen). Dit garandeert:
 
-- **Consistente kubuskleuren**: Elke sticker toont exact de gedefinieerde `StickerColor::to_color()` waarde, ongeacht camerahoek of lichtpositie.
+- **Consistente kubuskleuren**: Elke sticker toont exact de gedefinieerde `StickerColor::to_color()` waarde, ongeacht camerahoek.
 - **Geen schaduwvariatie**: Geen ambient occlusion, specular highlights of diffuse shading die kleuren beïnvloeden.
 
 **Waarom PBR ongeschikt is**: PBR introduceert lichtafhankelijke kleurvariatie. Een rode sticker zou donkerder lijken in de schaduw en lichter bij directe belichting — onaanvaardbaar voor een puzzel waar kleurherkenning essentieel is.
+
+### Rendering hardening maatregelen
+
+De volgende maatregelen zijn genomen om kleurintegriteit te garanderen:
+
+| Maatregel | Implementatie | Reden |
+|-----------|--------------|-------|
+| Unlit materialen | `StandardMaterial { unlit: true }` op alle materialen (stickers + cubie body) | Kleuren onafhankelijk van licht |
+| Geen lichtbronnen | Geen `DirectionalLight`, geen `AmbientLight` | Elimineert schaduw-artefacten |
+| Geen tone mapping | `Tonemapping::None` op camera | Voorkomt kleurverschuiving door post-processing |
+| Double-sided stickers | `double_sided: true, cull_mode: None` op sticker materialen | Voorkomt onzichtbare stickers door backface culling na rotatie |
+| Sticker elevatie | `STICKER_ELEVATION: 0.005` | Voorkomt z-fighting tussen sticker en cubie body |
+| Rotatie snapping | `snap_rotation()` met brute-force 24-oriëntatie matching | Voorkomt floating-point drift na vele rotaties |
 
 ---
 
 ## 1. Stapsgewijs Ontwikkelplan
 
 ### Fase 1: Scramble State & Move Generation
-- Random-move scramble implementeren (baseline)
+- Random-state scramble via `rcuber` crate (Kociemba two-phase algoritme)
 - `ScrambleQueue` resource introduceren
-- **Risico**: Move-generatie produceert triviale of redundante sequenties
-- **Validatie**: Verify dat gegenereerde moves geen directe herhalingen bevatten
+- **Risico**: Solver kan traag zijn bij eerste aanroep (lookup tables initialiseren)
+- **Validatie**: Verify dat gegenereerde state geldig is en scramble ≤21 moves bevat
 
 ### Fase 2: Scramble Animatie Pipeline
 - Sequentiële move-afspeling via bestaande animatie-infrastructuur
@@ -30,11 +43,6 @@ De applicatie gebruikt **unlit rendering** (via `MeshMaterial3d` met onverlichte
 - History reset na voltooiing
 - **Risico**: Gebruiker klikt undo tijdens scramble
 - **Validatie**: Input blocking tijdens scramble werkt correct
-
-### Fase 4: Random-State Scramble (optioneel/toekomstig)
-- Kociemba-algoritme integreren via externe crate
-- **Risico**: Complexiteit, tabellen laden, performance
-- **Validatie**: Gegenereerde state is geldig; oplossing bereikt target state
 
 ---
 
@@ -68,6 +76,7 @@ Geen nieuwe components nodig. Bestaande `Cubie` en `Sticker` volstaan.
 | `handle_scramble_confirmation` | Dialoog interactie → genereer moves, vul queue |
 | `process_scramble_queue` | Pakt volgende move uit queue, start animatie |
 | `finish_scramble` | Na laatste move: reset history, zet status naar Idle |
+| `update_scramble_button` | Visuele enable/disable van de scramble knop |
 
 ---
 
@@ -81,28 +90,38 @@ De bestaande `CubeState` resource (27 cubies met grid_position + stickers) is de
 
 Bestaande `CubeMove { axis, layer, clockwise }`. Voor 180° rotaties: twee opeenvolgende identieke moves in de queue.
 
-### Random-move scramble (baseline, eerste implementatie)
+### Random-state scramble (geïmplementeerd via `rcuber`)
 
-1. Genereer 20–25 moves
-2. Per move: kies random `RotationAxis` + `layer` ∈ {-1, 1} (buitenste lagen) + `clockwise` ∈ {true, false}
-3. Constraint: volgende move mag niet dezelfde axis+layer combinatie hebben als vorige
-4. 180° wordt gerepresenteerd door dezelfde move tweemaal toe te voegen
+De scramble wordt gegenereerd met het Kociemba two-phase algoritme:
 
-Mapping naar standaardnotatie:
-- U = Y, layer 1, CW
-- D = Y, layer -1, CCW (vanuit +Y perspectief)
-- R = X, layer 1, CW
-- L = X, layer -1, CCW
-- F = Z, layer 1, CW
-- B = Z, layer -1, CCW
+1. `rcuber::generator::Generator::random()` genereert een willekeurige, geldige cube state
+   - Valide permutatie van 8 hoekstukken + oriëntatie (mod 3)
+   - Valide permutatie van 12 randstukken + oriëntatie (mod 2)
+   - Oplosbaarheid gegarandeerd (pariteitscheck, oriëntatiesom)
+2. `rcuber::solver::min2phase::Min2PhaseSolver` lost deze state op (random_state → solved)
+3. De oplossing wordt **geïnverteerd** (omgekeerde volgorde + inverse van elke move) om de scramble te verkrijgen (solved → random_state)
+4. Resultaat: ≤21 moves, WCA-compliant kwaliteit
 
-### Random-state scramble (geavanceerd, toekomstig)
+### Move-mapping (rcuber → CubeMove)
 
-1. Genereer willekeurige permutatie van 8 hoekstukken + oriëntatie (mod 3)
-2. Genereer willekeurige permutatie van 12 randstukken + oriëntatie (mod 2)
-3. Valideer oplosbaarheid (pariteitscheck, oriëntatiesom)
-4. Gebruik Kociemba two-phase solver om move-sequentie te berekenen
-5. Resultaat: ≤20 moves (optimaal)
+De `rcuber::moves::Move` enum wordt vertaald naar `CubeMove` via `rcuber_move_to_cube_moves()`:
+
+| Standaardnotatie | Axis | Layer | Clockwise | Toelichting |
+|------------------|------|-------|-----------|-------------|
+| U  | Y | +1 | true  | CW vanuit +Y perspectief |
+| U' | Y | +1 | false | CCW vanuit +Y perspectief |
+| D  | Y | -1 | false | CW vanuit -Y = CCW vanuit +Y |
+| D' | Y | -1 | true  | CCW vanuit -Y = CW vanuit +Y |
+| R  | X | +1 | true  | CW vanuit +X perspectief |
+| R' | X | +1 | false | CCW vanuit +X perspectief |
+| L  | X | -1 | false | CW vanuit -X = CCW vanuit +X |
+| L' | X | -1 | true  | CCW vanuit -X = CW vanuit +X |
+| F  | Z | +1 | true  | CW vanuit +Z perspectief |
+| F' | Z | +1 | false | CCW vanuit +Z perspectief |
+| B  | Z | -1 | false | CW vanuit -Z = CCW vanuit +Z |
+| B' | Z | -1 | true  | CCW vanuit -Z = CW vanuit +Z |
+
+Voor 180° moves (U2, D2, etc.) worden twee identieke 90° CubeMoves in de queue geplaatst.
 
 ### Integratie met ECS en animation pipeline
 
@@ -132,7 +151,17 @@ Na lege queue → `finish_scramble` system reset `ActionHistory` (beide stacks l
 - **Actieopslag**: `ScrambleQueue` als Resource (niet Events, want multi-frame lifetime)
 - **Stateless systems**: Elk system leest Resources/Components, muteert, klaar. Geen lokale state.
 - **Loose coupling**: Systems communiceren alleen via `ScrambleQueue`, `FaceRotationAnimation`, en `ActionHistory`. Geen directe system-naar-system afhankelijkheid.
-- **Pipeline opsplitsing**: Elke stap is een apart system met run-conditions (`scramble_queue.is_active()`, `!animation.active`, etc.)
+- **Pipeline opsplitsing**: Elke stap is een apart system. Alle Update systems worden via `.chain()` sequentieel uitgevoerd om deterministische volgorde te garanderen.
+
+### Rotatie-integriteit
+
+Na elke rotatie (inclusief scramble moves) wordt `snap_rotation()` toegepast om de cubie-oriëntatie te snappen naar de dichtstbijzijnde van de 24 geldige kubus-oriëntaties. Dit voorkomt floating-point drift die na vele opeenvolgende rotaties (20+ tijdens scramble) kan leiden tot:
+
+- Visueel scheve cubelets
+- Stickers die naar binnen wijzen (onzichtbaar door backface culling)
+- Inconsistente grid-posities
+
+De implementatie genereert alle 24 oriëntaties (6 face-richtingen × 4 rotaties per as) en selecteert de dichtstbijzijnde via quaternion dot product.
 
 ---
 
@@ -148,6 +177,7 @@ Na lege queue → `finish_scramble` system reset `ActionHistory` (beide stacks l
     → handle_scramble_confirmation
         leest: dialog interaction
         schrijft: ScrambleQueue.moves = generate_scramble_moves()
+                  (Generator::random() → Min2PhaseSolver::solve() → inverteer oplossing → map naar CubeMove)
         schrijft: ScrambleQueue.status = Active
 
 [Per frame tijdens scramble]
@@ -180,20 +210,18 @@ Na lege queue → `finish_scramble` system reset `ActionHistory` (beide stacks l
 
 ## 6. Libraries / Tooling
 
-| Optie | Voordelen | Nadelen | Wanneer kiezen |
-|-------|-----------|---------|----------------|
-| `rand` crate | Simpel, lightweight, genoeg voor random-move | Geen cube-specifieke logica | Altijd (baseline) |
-| `kociemba` / eigen two-phase solver | Optimale scrambles (≤20 moves), WCA-compliant | Complexiteit, lookup tables (~20MB), langere opstarttijd | Wanneer competitie-kwaliteit vereist is |
-| Geen externe solver, eigen random-move | Geen dependencies, simpel te testen | Niet WCA-compliant, mogelijk bias in distributie | MVP / eerste release |
-
-**Aanbeveling**: Start met random-move scramble via `rand`. Voeg later optioneel een Kociemba-solver toe als feature flag.
+| Optie | Voordelen | Nadelen | Status |
+|-------|-----------|---------|--------|
+| `rcuber` crate | Random-state scramble, Kociemba two-phase solver, WCA-compliant kwaliteit, ≤21 moves | Grotere dependency, lookup tables initialisatie bij eerste gebruik | **Geïmplementeerd** |
+| `rand` crate | Lightweight | Niet meer nodig voor scramble (rcuber bevat eigen randomisatie) | Behouden voor overig gebruik |
 
 ---
 
 ## 7. Aannames
 
 - De bestaande animatie-pipeline ondersteunt slechts één actieve animatie tegelijk (bevestigd door `animation.active` checks)
-- Scramble-snelheid kan verhoogd worden (bijv. `duration: 0.1` i.p.v. `0.3`) voor betere UX
+- Scramble-snelheid is verhoogd (`duration: 0.1` i.p.v. `0.3`) voor betere UX
 - Er is geen parallelle multi-move animatie nodig
-- De confirmation dialog wordt een simpele Bevy UI overlay (geen externe UI library)
-
+- De confirmation dialog is een simpele Bevy UI overlay (geen externe UI library)
+- De `rcuber` solver levert altijd een geldige oplossing voor door `Generator::random()` gegenereerde states
+- Alle materialen zijn unlit — er zijn geen lichtbronnen in de scene

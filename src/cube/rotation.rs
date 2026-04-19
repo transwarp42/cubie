@@ -9,6 +9,58 @@ use super::history::ActionHistory;
 #[derive(Component)]
 pub struct RotationPivot;
 
+/// All 24 valid rotation quaternions for a cube (multiples of 90° around principal axes).
+/// Generated from the 6 possible directions for the X-axis × 4 rotations around it.
+fn all_24_orientations() -> [Quat; 24] {
+    use std::f32::consts::FRAC_PI_2;
+
+    // The 6 face rotations that place each axis direction as the new +X
+    let face_rotations = [
+        Quat::IDENTITY,                              // +X stays +X
+        Quat::from_rotation_y(FRAC_PI_2),            // +Z becomes +X
+        Quat::from_rotation_y(std::f32::consts::PI), // -X becomes +X
+        Quat::from_rotation_y(-FRAC_PI_2),           // -Z becomes +X
+        Quat::from_rotation_z(FRAC_PI_2),            // +Y becomes +X
+        Quat::from_rotation_z(-FRAC_PI_2),           // -Y becomes +X
+    ];
+
+    // 4 rotations around the X-axis (0°, 90°, 180°, 270°)
+    let x_rotations = [
+        Quat::IDENTITY,
+        Quat::from_rotation_x(FRAC_PI_2),
+        Quat::from_rotation_x(std::f32::consts::PI),
+        Quat::from_rotation_x(-FRAC_PI_2),
+    ];
+
+    let mut orientations = [Quat::IDENTITY; 24];
+    let mut i = 0;
+    for face in &face_rotations {
+        for around in &x_rotations {
+            orientations[i] = (*face * *around).normalize();
+            i += 1;
+        }
+    }
+    orientations
+}
+
+/// Snap a quaternion to the nearest of the 24 valid axis-aligned cube orientations.
+/// Uses quaternion dot product to find the closest match, guaranteeing a valid result.
+fn snap_rotation(q: Quat) -> Quat {
+    let orientations = all_24_orientations();
+    let mut best = Quat::IDENTITY;
+    let mut best_dot: f32 = -1.0;
+
+    for &candidate in &orientations {
+        // |dot| because q and -q represent the same rotation
+        let dot = q.dot(candidate).abs();
+        if dot > best_dot {
+            best_dot = dot;
+            best = candidate;
+        }
+    }
+    best
+}
+
 /// System: when drag is resolved, start the face rotation animation.
 pub fn start_face_rotation(
     mut commands: Commands,
@@ -106,9 +158,9 @@ pub fn finish_face_rotation(
 
             if let Ok((mut cubie, mut transform)) = cubies.get_mut(entity) {
                 transform.translation = snapped;
-                transform.rotation = gt_transform.rotation;
-                // Normalize to avoid drift
-                transform.rotation = transform.rotation.normalize();
+                // Snap rotation to nearest axis-aligned orientation to prevent
+                // floating-point drift accumulating over many moves (especially scramble).
+                transform.rotation = snap_rotation(gt_transform.rotation);
 
                 // Update grid position on the component
                 cubie.grid_position = IVec3::new(

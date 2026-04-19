@@ -22,10 +22,6 @@ fn main() {
             ..default()
         }))
         .insert_resource(ClearColor(Color::srgb(0.15, 0.15, 0.2)))
-        .insert_resource(AmbientLight {
-            color: Color::WHITE,
-            brightness: 500.0,
-        })
         .insert_resource(CubeState::solved())
         .insert_resource(DragState::default())
         .insert_resource(FaceRotationAnimation::default())

@@ -1,3 +1,4 @@
+use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
 
@@ -39,22 +40,9 @@ pub fn setup_camera(mut commands: Commands) {
 
     commands.spawn((
         Camera3d::default(),
+        Tonemapping::None,
         Transform::from_translation(pos).looking_at(Vec3::ZERO, Vec3::Y),
         orbit,
-    ));
-
-    // Directional light for depth effect
-    commands.spawn((
-        DirectionalLight {
-            illuminance: 15_000.0,
-            ..default()
-        },
-        Transform::from_rotation(Quat::from_euler(
-            EulerRot::XYZ,
-            -std::f32::consts::FRAC_PI_4,
-            std::f32::consts::FRAC_PI_4,
-            0.0,
-        )),
     ));
 }
 

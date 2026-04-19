@@ -1,7 +1,9 @@
 use std::collections::VecDeque;
 
 use bevy::prelude::*;
-use rand::Rng;
+use rcuber::generator::Generator;
+use rcuber::moves::Move as RcuberMove;
+use rcuber::solver::min2phase::Min2PhaseSolver;
 
 use super::animation::{ActionOrigin, FaceRotationAnimation};
 use super::history::ActionHistory;
@@ -46,48 +48,62 @@ pub struct ScrambleConfirmYes;
 #[derive(Component)]
 pub struct ScrambleConfirmNo;
 
-/// Generate a random-move scramble of 20–25 moves.
-fn generate_scramble_moves() -> VecDeque<CubeMove> {
-    let mut rng = rand::thread_rng();
-    let count = rng.gen_range(20..=25);
-    let mut moves = VecDeque::with_capacity(count * 2); // extra capacity for 180° doubles
-
-    let axes = [RotationAxis::X, RotationAxis::Y, RotationAxis::Z];
-    let layers = [-1i32, 1];
-
-    let mut last_axis: Option<RotationAxis> = None;
-    let mut last_layer: Option<i32> = None;
-
-    for _ in 0..count {
-        loop {
-            let axis = axes[rng.gen_range(0..3)];
-            let layer = layers[rng.gen_range(0..2)];
-
-            // Avoid repeating same axis+layer
-            if last_axis == Some(axis) && last_layer == Some(layer) {
-                continue;
-            }
-
-            let rotation_type = rng.gen_range(0..3); // 0 = 90° CW, 1 = 90° CCW, 2 = 180°
-            let clockwise = rotation_type == 0;
-            let mv = CubeMove { axis, layer, clockwise };
-
-            if rotation_type == 2 {
-                // 180°: add the same move twice
-                let mv_180 = CubeMove { axis, layer, clockwise: true };
-                moves.push_back(mv_180);
-                moves.push_back(mv_180);
-            } else {
-                moves.push_back(mv);
-            }
-
-            last_axis = Some(axis);
-            last_layer = Some(layer);
-            break;
-        }
+/// Convert an rcuber Move to one or more CubeMoves.
+/// For 180° moves (X2), two identical 90° moves are returned.
+/// For opposite-side faces (D, L, B), the clockwise direction is inverted
+/// because "clockwise" in our model means CW when viewed from the positive axis.
+fn rcuber_move_to_cube_moves(m: RcuberMove) -> Vec<CubeMove> {
+    match m {
+        RcuberMove::U  => vec![CubeMove { axis: RotationAxis::Y, layer:  1, clockwise: true }],
+        RcuberMove::U3 => vec![CubeMove { axis: RotationAxis::Y, layer:  1, clockwise: false }],
+        RcuberMove::U2 => vec![CubeMove { axis: RotationAxis::Y, layer:  1, clockwise: true },
+                               CubeMove { axis: RotationAxis::Y, layer:  1, clockwise: true }],
+        RcuberMove::D  => vec![CubeMove { axis: RotationAxis::Y, layer: -1, clockwise: false }],
+        RcuberMove::D3 => vec![CubeMove { axis: RotationAxis::Y, layer: -1, clockwise: true }],
+        RcuberMove::D2 => vec![CubeMove { axis: RotationAxis::Y, layer: -1, clockwise: true },
+                               CubeMove { axis: RotationAxis::Y, layer: -1, clockwise: true }],
+        RcuberMove::R  => vec![CubeMove { axis: RotationAxis::X, layer:  1, clockwise: true }],
+        RcuberMove::R3 => vec![CubeMove { axis: RotationAxis::X, layer:  1, clockwise: false }],
+        RcuberMove::R2 => vec![CubeMove { axis: RotationAxis::X, layer:  1, clockwise: true },
+                               CubeMove { axis: RotationAxis::X, layer:  1, clockwise: true }],
+        RcuberMove::L  => vec![CubeMove { axis: RotationAxis::X, layer: -1, clockwise: false }],
+        RcuberMove::L3 => vec![CubeMove { axis: RotationAxis::X, layer: -1, clockwise: true }],
+        RcuberMove::L2 => vec![CubeMove { axis: RotationAxis::X, layer: -1, clockwise: true },
+                               CubeMove { axis: RotationAxis::X, layer: -1, clockwise: true }],
+        RcuberMove::F  => vec![CubeMove { axis: RotationAxis::Z, layer:  1, clockwise: true }],
+        RcuberMove::F3 => vec![CubeMove { axis: RotationAxis::Z, layer:  1, clockwise: false }],
+        RcuberMove::F2 => vec![CubeMove { axis: RotationAxis::Z, layer:  1, clockwise: true },
+                               CubeMove { axis: RotationAxis::Z, layer:  1, clockwise: true }],
+        RcuberMove::B  => vec![CubeMove { axis: RotationAxis::Z, layer: -1, clockwise: false }],
+        RcuberMove::B3 => vec![CubeMove { axis: RotationAxis::Z, layer: -1, clockwise: true }],
+        RcuberMove::B2 => vec![CubeMove { axis: RotationAxis::Z, layer: -1, clockwise: true },
+                               CubeMove { axis: RotationAxis::Z, layer: -1, clockwise: true }],
+        _ => vec![], // Ignore wide/slice/rotation moves (shouldn't appear in min2phase solutions)
     }
+}
 
-    moves
+/// Generate a random-state scramble using the Kociemba two-phase algorithm.
+///
+/// 1. Generate a random valid cube state
+/// 2. Solve it with min2phase to get: random_state → solved
+/// 3. Invert the solution to get: solved → random_state (the scramble)
+fn generate_scramble_moves() -> VecDeque<CubeMove> {
+    let random_cube = Generator::random();
+    let mut solver = Min2PhaseSolver { cube: random_cube };
+    let solution = solver.solve();
+
+    // Invert the solution: reverse order and invert each move
+    let inverted: Vec<RcuberMove> = solution
+        .moves
+        .iter()
+        .rev()
+        .map(|m| m.get_inverse())
+        .collect();
+
+    inverted
+        .into_iter()
+        .flat_map(rcuber_move_to_cube_moves)
+        .collect()
 }
 
 /// Spawn the scramble button (left of Labels, right of Undo/Redo).
