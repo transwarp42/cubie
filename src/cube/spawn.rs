@@ -43,7 +43,7 @@ pub fn spawn_cube(
         ..default()
     });
 
-    // Pre-create materials per sticker color
+    // Pre-create materials per sticker color — unlit for consistent colors
     let mut color_materials: HashMap<StickerColor, Handle<StandardMaterial>> = HashMap::new();
     for &color in &[
         StickerColor::White,
@@ -57,6 +57,7 @@ pub fn spawn_cube(
             color,
             materials.add(StandardMaterial {
                 base_color: color.to_color(),
+                unlit: true,
                 ..default()
             }),
         );
@@ -83,6 +84,10 @@ pub fn spawn_cube(
                 // Colored stickers on outer faces
                 for &(face_dir, color) in &cubie_data.stickers {
                     parent.spawn((
+                        Sticker {
+                            face_direction: face_dir,
+                            color,
+                        },
                         Mesh3d(sticker_mesh.clone()),
                         MeshMaterial3d(color_materials[&color].clone()),
                         sticker_transform(face_dir),

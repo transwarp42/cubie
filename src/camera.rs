@@ -1,6 +1,8 @@
 use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::prelude::*;
 
+use crate::cube::input::{DragPhase, DragState};
+
 /// Orbit camera component for rotating around the cube.
 #[derive(Component)]
 pub struct OrbitCamera {
@@ -62,13 +64,17 @@ pub fn orbit_camera_system(
     mut mouse_motion: EventReader<MouseMotion>,
     mut scroll: EventReader<MouseWheel>,
     mut query: Query<(&mut OrbitCamera, &mut Transform)>,
+    drag_state: Res<DragState>,
 ) {
     let Ok((mut orbit, mut transform)) = query.get_single_mut() else {
         return;
     };
 
+    // Only allow orbit when no cube interaction is happening
+    let allow_orbit = matches!(drag_state.phase, DragPhase::Idle);
+
     // Rotate when left mouse button is pressed
-    if mouse_button.pressed(MouseButton::Left) {
+    if allow_orbit && mouse_button.pressed(MouseButton::Left) {
         for event in mouse_motion.read() {
             orbit.yaw -= event.delta.x * orbit.sensitivity;
             orbit.pitch += event.delta.y * orbit.sensitivity;
