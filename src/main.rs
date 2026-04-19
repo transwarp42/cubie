@@ -6,6 +6,7 @@ use bevy::prelude::*;
 use cube::model::CubeState;
 use cube::input::DragState;
 use cube::animation::FaceRotationAnimation;
+use cube::labels::FaceLabelsVisible;
 
 fn main() {
     let mut app = App::new();
@@ -26,7 +27,8 @@ fn main() {
         .insert_resource(CubeState::solved())
         .insert_resource(DragState::default())
         .insert_resource(FaceRotationAnimation::default())
-        .add_systems(Startup, (camera::setup_camera, cube::spawn::spawn_cube, icon::set_app_icon))
+        .insert_resource(FaceLabelsVisible::default())
+        .add_systems(Startup, (camera::setup_camera, cube::spawn::spawn_cube, cube::labels::spawn_face_labels, icon::set_app_icon))
         .add_systems(Update, (
             cube::input::handle_mouse_input,
             cube::input::resolve_drag_direction,
@@ -34,6 +36,8 @@ fn main() {
             cube::animation::animate_face_rotation,
             cube::rotation::finish_face_rotation,
             camera::orbit_camera_system,
+            cube::labels::update_face_labels,
+            cube::labels::toggle_labels_button,
         ).chain());
 
     app.run();

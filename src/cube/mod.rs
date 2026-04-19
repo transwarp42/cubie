@@ -1,5 +1,6 @@
 pub mod animation;
 pub mod input;
+pub mod labels;
 pub mod model;
 pub mod picking;
 pub mod rotation;
