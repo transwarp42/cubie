@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use super::animation::{ActionOrigin, FaceRotationAnimation};
 use super::model::*;
 use super::rotation::RotationPivot;
+use super::scramble::ScrambleQueue;
 
 /// Resource storing the undo/redo action stacks.
 #[derive(Resource, Default)]
@@ -104,8 +105,9 @@ pub fn handle_undo_redo_input(
     undo_query: Query<&Interaction, (Changed<Interaction>, With<UndoButton>)>,
     redo_query: Query<&Interaction, (Changed<Interaction>, With<RedoButton>)>,
     cubies: Query<(Entity, &Cubie)>,
+    scramble: Res<ScrambleQueue>,
 ) {
-    if animation.active {
+    if animation.active || scramble.is_active() {
         return;
     }
 

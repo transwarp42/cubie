@@ -5,4 +5,5 @@ pub mod labels;
 pub mod model;
 pub mod picking;
 pub mod rotation;
+pub mod scramble;
 pub mod spawn;

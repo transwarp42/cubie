@@ -133,8 +133,8 @@ pub fn finish_face_rotation(
         ActionOrigin::Regular => {
             history.push_action(mv);
         }
-        ActionOrigin::Undo | ActionOrigin::Redo => {
-            // Already handled in handle_undo_redo_input
+        ActionOrigin::Undo | ActionOrigin::Redo | ActionOrigin::Scramble => {
+            // Already handled elsewhere
         }
     }
 

@@ -3,6 +3,7 @@ use bevy::window::PrimaryWindow;
 
 use super::model::*;
 use super::picking::*;
+use super::scramble::ScrambleQueue;
 
 /// Drag state machine phases.
 #[derive(Debug, Clone)]
@@ -47,7 +48,13 @@ pub fn handle_mouse_input(
     camera_q: Query<(&Camera, &GlobalTransform), With<super::super::camera::OrbitCamera>>,
     cubies: Query<(Entity, &Cubie, &GlobalTransform)>,
     mut drag_state: ResMut<DragState>,
+    scramble: Res<ScrambleQueue>,
 ) {
+    // Block input during scramble
+    if scramble.is_active() {
+        return;
+    }
+
     // Don't process input during animation
     if matches!(drag_state.phase, DragPhase::Animating) {
         return;
