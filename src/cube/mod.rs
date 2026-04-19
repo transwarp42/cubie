@@ -1,4 +1,5 @@
 pub mod animation;
+pub mod history;
 pub mod input;
 pub mod labels;
 pub mod model;

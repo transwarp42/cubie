@@ -150,6 +150,17 @@ pub struct CubeMove {
     pub clockwise: bool,
 }
 
+impl CubeMove {
+    /// Return the inverse move (same axis and layer, opposite direction).
+    pub fn inverse(self) -> Self {
+        Self {
+            axis: self.axis,
+            layer: self.layer,
+            clockwise: !self.clockwise,
+        }
+    }
+}
+
 /// The complete logical state of the Rubik's Cube.
 #[derive(Resource)]
 pub struct CubeState {

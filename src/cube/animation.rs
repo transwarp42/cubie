@@ -2,6 +2,15 @@ use bevy::prelude::*;
 
 use super::model::*;
 
+/// Tracks whether a rotation was triggered by user drag, undo, or redo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ActionOrigin {
+    #[default]
+    Regular,
+    Undo,
+    Redo,
+}
+
 /// Ease-out cubic: 1 - (1 - t)^3
 fn ease_out_cubic(t: f32) -> f32 {
     1.0 - (1.0 - t).powi(3)
@@ -19,6 +28,7 @@ pub struct FaceRotationAnimation {
     pub duration: f32,
     pub elapsed: f32,
     pub move_data: CubeMove,
+    pub origin: ActionOrigin,
 }
 
 impl Default for FaceRotationAnimation {
@@ -37,6 +47,7 @@ impl Default for FaceRotationAnimation {
                 layer: 0,
                 clockwise: true,
             },
+            origin: ActionOrigin::Regular,
         }
     }
 }

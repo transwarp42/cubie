@@ -2,7 +2,8 @@ use bevy::prelude::*;
 
 use super::model::*;
 use super::input::{DragPhase, DragState};
-use super::animation::FaceRotationAnimation;
+use super::animation::{ActionOrigin, FaceRotationAnimation};
+use super::history::ActionHistory;
 
 /// Marker for the temporary pivot entity used during rotation animation.
 #[derive(Component)]
@@ -68,6 +69,7 @@ pub fn start_face_rotation(
         duration: 0.3,
         elapsed: 0.0,
         move_data: CubeMove { axis, layer, clockwise },
+        origin: ActionOrigin::Regular,
     };
 
     drag_state.phase = DragPhase::Animating;
@@ -79,6 +81,7 @@ pub fn finish_face_rotation(
     mut animation: ResMut<FaceRotationAnimation>,
     mut drag_state: ResMut<DragState>,
     mut cube_state: ResMut<CubeState>,
+    mut history: ResMut<ActionHistory>,
     mut cubies: Query<(&mut Cubie, &mut Transform)>,
     global_transforms: Query<&GlobalTransform>,
 ) {
@@ -124,6 +127,16 @@ pub fn finish_face_rotation(
 
     // Update logical cube state
     cube_state.apply_rotation(mv);
+
+    // Update undo/redo stacks based on action origin
+    match animation.origin {
+        ActionOrigin::Regular => {
+            history.push_action(mv);
+        }
+        ActionOrigin::Undo | ActionOrigin::Redo => {
+            // Already handled in handle_undo_redo_input
+        }
+    }
 
     // Reset
     *animation = FaceRotationAnimation::default();

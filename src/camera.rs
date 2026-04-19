@@ -1,4 +1,4 @@
-use bevy::input::mouse::{MouseMotion, MouseWheel};
+use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
 
 use crate::cube::input::{DragPhase, DragState};
@@ -62,7 +62,6 @@ pub fn setup_camera(mut commands: Commands) {
 pub fn orbit_camera_system(
     mouse_button: Res<ButtonInput<MouseButton>>,
     mut mouse_motion: EventReader<MouseMotion>,
-    mut scroll: EventReader<MouseWheel>,
     mut query: Query<(&mut OrbitCamera, &mut Transform)>,
     drag_state: Res<DragState>,
 ) {
@@ -87,11 +86,6 @@ pub fn orbit_camera_system(
         mouse_motion.clear();
     }
 
-    // Zoom with scroll wheel
-    for event in scroll.read() {
-        orbit.distance -= event.y * 0.5;
-        orbit.distance = orbit.distance.clamp(4.0, 15.0);
-    }
 
     // Update camera position
     transform.translation = orbit_position(&orbit);

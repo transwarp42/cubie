@@ -7,6 +7,7 @@ use cube::model::CubeState;
 use cube::input::DragState;
 use cube::animation::FaceRotationAnimation;
 use cube::labels::FaceLabelsVisible;
+use cube::history::ActionHistory;
 
 fn main() {
     let mut app = App::new();
@@ -28,16 +29,19 @@ fn main() {
         .insert_resource(DragState::default())
         .insert_resource(FaceRotationAnimation::default())
         .insert_resource(FaceLabelsVisible::default())
-        .add_systems(Startup, (camera::setup_camera, cube::spawn::spawn_cube, cube::labels::spawn_face_labels, icon::set_app_icon))
+        .insert_resource(ActionHistory::default())
+        .add_systems(Startup, (camera::setup_camera, cube::spawn::spawn_cube, cube::labels::spawn_face_labels, cube::history::spawn_undo_redo_buttons, icon::set_app_icon))
         .add_systems(Update, (
             cube::input::handle_mouse_input,
             cube::input::resolve_drag_direction,
+            cube::history::handle_undo_redo_input,
             cube::rotation::start_face_rotation,
             cube::animation::animate_face_rotation,
             cube::rotation::finish_face_rotation,
             camera::orbit_camera_system,
             cube::labels::update_face_labels,
             cube::labels::toggle_labels_button,
+            cube::history::update_undo_redo_buttons,
         ).chain());
 
     app.run();
