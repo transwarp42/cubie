@@ -8,7 +8,7 @@ use cube::input::DragState;
 use cube::animation::FaceRotationAnimation;
 use cube::labels::FaceLabelsVisible;
 use cube::history::ActionHistory;
-use cube::scramble::ScrambleQueue;
+use cube::scramble::{ScrambleQueue, ResetCubeEvent};
 
 fn main() {
     let mut app = App::new();
@@ -28,9 +28,11 @@ fn main() {
         .insert_resource(FaceLabelsVisible::default())
         .insert_resource(ActionHistory::default())
         .insert_resource(ScrambleQueue::default())
+        .add_event::<ResetCubeEvent>()
         .add_systems(Startup, (camera::setup_camera, cube::spawn::spawn_cube, cube::labels::spawn_face_labels, cube::history::spawn_undo_redo_buttons, cube::scramble::spawn_scramble_button, icon::set_app_icon))
         .add_systems(Update, (
             cube::scramble::handle_scramble_input,
+            cube::scramble::handle_reset_input,
             cube::scramble::handle_scramble_confirmation,
             cube::input::handle_mouse_input,
             cube::input::resolve_drag_direction,
@@ -40,6 +42,7 @@ fn main() {
             cube::animation::animate_face_rotation,
             cube::rotation::finish_face_rotation,
             cube::scramble::finish_scramble,
+            cube::scramble::execute_reset,
             camera::orbit_camera_system,
             cube::labels::update_face_labels,
             cube::labels::toggle_labels_button,

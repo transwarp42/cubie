@@ -36,6 +36,14 @@ impl ScrambleQueue {
 #[derive(Component)]
 pub struct ScrambleButton;
 
+/// Marker for the reset button.
+#[derive(Component)]
+pub struct ResetButton;
+
+/// Event fired when the cube should be reset to solved state.
+#[derive(Event)]
+pub struct ResetCubeEvent;
+
 /// Marker for the confirmation dialog overlay.
 #[derive(Component)]
 pub struct ScrambleConfirmDialog;
@@ -108,6 +116,35 @@ fn generate_scramble_moves() -> VecDeque<CubeMove> {
 
 /// Spawn the scramble button (left of Labels, right of Undo/Redo).
 pub fn spawn_scramble_button(mut commands: Commands) {
+    // Reset button (right of Scramble)
+    commands
+        .spawn((
+            ResetButton,
+            Button,
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(10.0),
+                right: Val::Px(330.0),
+                padding: UiRect::all(Val::Px(8.0)),
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            BorderColor(Color::srgba(1.0, 1.0, 1.0, 0.3)),
+            BorderRadius::all(Val::Px(4.0)),
+            BackgroundColor(Color::srgba(0.2, 0.2, 0.25, 0.8)),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Text::new("Reset"),
+                TextFont {
+                    font_size: 14.0,
+                    ..default()
+                },
+                TextColor(Color::srgba(1.0, 1.0, 1.0, 0.9)),
+            ));
+        });
+
+    // Scramble button
     commands
         .spawn((
             ScrambleButton,
@@ -366,7 +403,8 @@ pub fn finish_scramble(
 pub fn update_scramble_button(
     scramble: Res<ScrambleQueue>,
     animation: Res<FaceRotationAnimation>,
-    mut query: Query<(&Children, &mut BackgroundColor), With<ScrambleButton>>,
+    mut scramble_query: Query<(&Children, &mut BackgroundColor), With<ScrambleButton>>,
+    mut reset_query: Query<(&Children, &mut BackgroundColor), (With<ResetButton>, Without<ScrambleButton>)>,
     mut text_query: Query<&mut TextColor>,
 ) {
     let enabled = scramble.status == ScrambleStatus::Idle && !animation.active;
@@ -376,7 +414,7 @@ pub fn update_scramble_button(
     let active_text = Color::srgba(1.0, 1.0, 1.0, 0.9);
     let inactive_text = Color::srgba(1.0, 1.0, 1.0, 0.4);
 
-    for (children, mut bg) in &mut query {
+    for (children, mut bg) in scramble_query.iter_mut().chain(reset_query.iter_mut()) {
         *bg = BackgroundColor(if enabled { active_bg } else { inactive_bg });
         for &child in children.iter() {
             if let Ok(mut tc) = text_query.get_mut(child) {
@@ -384,5 +422,55 @@ pub fn update_scramble_button(
             }
         }
     }
+}
+
+/// System: handle reset button click → fire ResetCubeEvent.
+pub fn handle_reset_input(
+    mut events: EventWriter<ResetCubeEvent>,
+    scramble: Res<ScrambleQueue>,
+    animation: Res<FaceRotationAnimation>,
+    query: Query<&Interaction, (Changed<Interaction>, With<ResetButton>)>,
+) {
+    if scramble.status != ScrambleStatus::Idle || animation.active {
+        return;
+    }
+
+    for interaction in &query {
+        if *interaction == Interaction::Pressed {
+            events.send(ResetCubeEvent);
+        }
+    }
+}
+
+/// System: execute cube reset — despawn all cubies, reset state, respawn.
+pub fn execute_reset(
+    mut commands: Commands,
+    mut events: EventReader<ResetCubeEvent>,
+    mut cube_state: ResMut<CubeState>,
+    mut history: ResMut<ActionHistory>,
+    cubies: Query<Entity, With<Cubie>>,
+    meshes: ResMut<Assets<Mesh>>,
+    materials: ResMut<Assets<StandardMaterial>>,
+) {
+    if events.read().next().is_none() {
+        return;
+    }
+    // Consume remaining events
+    events.read().for_each(drop);
+
+    // Despawn all existing cubies and their children
+    for entity in &cubies {
+        commands.entity(entity).despawn_recursive();
+    }
+
+    // Reset logical state
+    *cube_state = CubeState::solved();
+
+    // Clear history
+    history.undo_stack.clear();
+    history.redo_stack.clear();
+
+    // Respawn cube (reuse spawn_cube logic)
+    super::spawn::spawn_cube(commands, meshes, materials, cube_state.into());
 }
 

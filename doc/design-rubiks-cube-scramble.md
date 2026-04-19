@@ -59,7 +59,13 @@ src/cube/
 
 ### Components
 
-Geen nieuwe components nodig. Bestaande `Cubie` en `Sticker` volstaan.
+UI marker components: `ScrambleButton`, `ResetButton`, `ScrambleConfirmDialog`, `ScrambleConfirmYes`, `ScrambleConfirmNo`. Bestaande `Cubie` en `Sticker` volstaan voor de kubus zelf.
+
+### Events
+
+| Event | Doel |
+|-------|------|
+| `ResetCubeEvent` | Triggert een volledige reset van de kubus naar opgeloste toestand |
 
 ### Resources
 
@@ -71,12 +77,14 @@ Geen nieuwe components nodig. Bestaande `Cubie` en `Sticker` volstaan.
 
 | System | Verantwoordelijkheid |
 |--------|---------------------|
-| `spawn_scramble_button` | UI knop spawnen (Startup) |
-| `handle_scramble_input` | Klik detectie → confirmation state |
+| `spawn_scramble_button` | Scramble + Reset knoppen spawnen (Startup) |
+| `handle_scramble_input` | Scramble klik detectie → confirmation state |
 | `handle_scramble_confirmation` | Dialoog interactie → genereer moves, vul queue |
+| `handle_reset_input` | Reset klik detectie → fire `ResetCubeEvent` |
+| `execute_reset` | Despawn alle cubies, reset `CubeState` naar solved, respawn kubus, clear history |
 | `process_scramble_queue` | Pakt volgende move uit queue, start animatie |
 | `finish_scramble` | Na laatste move: reset history, zet status naar Idle |
-| `update_scramble_button` | Visuele enable/disable van de scramble knop |
+| `update_scramble_button` | Visuele enable/disable van Scramble en Reset knoppen |
 
 ---
 
@@ -204,7 +212,30 @@ De implementatie genereert alle 24 oriëntaties (6 face-richtingen × 4 rotaties
         schrijft: ScrambleQueue.status = Idle
 ```
 
-**Input blocking**: Tijdens `ScrambleQueue.status == Active` worden `handle_undo_redo_input`, `start_face_rotation`, en picking systems geblokkeerd via run-conditions.
+**Input blocking**: Tijdens `ScrambleQueue.status == Active` worden `handle_undo_redo_input`, `start_face_rotation`, picking systems, en de Reset knop geblokkeerd via run-conditions.
+
+### Reset flow
+
+```
+[Reset Button Click]
+    → handle_reset_input
+        leest: Interaction query, ScrambleQueue.status, animation.active
+        schrijft: ResetCubeEvent
+
+[Reset uitvoering]
+    → execute_reset
+        leest: ResetCubeEvent
+        schrijft: despawn alle Cubie entities
+        schrijft: CubeState = solved()
+        schrijft: ActionHistory (clear both stacks)
+        schrijft: spawn nieuwe kubus via spawn_cube()
+```
+
+### UI knoppen layout (van links naar rechts)
+
+```
+Reset (right: 330px) | Scramble (right: 230px) | Undo/Redo (right: 120px) | Labels (right: 10px)
+```
 
 ---
 

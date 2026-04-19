@@ -135,7 +135,6 @@ pub fn finish_face_rotation(
     mut cube_state: ResMut<CubeState>,
     mut history: ResMut<ActionHistory>,
     mut cubies: Query<(&mut Cubie, &mut Transform)>,
-    global_transforms: Query<&GlobalTransform>,
 ) {
     if !animation.active || animation.elapsed < animation.duration {
         return;
@@ -143,32 +142,36 @@ pub fn finish_face_rotation(
 
     let mv = animation.move_data;
 
-    // Read final global transforms, deparent, and set local transforms
+    // Compute the exact final pivot rotation from animation data.
+    // We do NOT read GlobalTransform because Bevy's transform propagation
+    // runs in PostUpdate, making GlobalTransform stale during Update.
+    let pivot_rotation = Quat::from_axis_angle(animation.rotation_axis, animation.target_angle);
+
     for &entity in &animation.affected_cubies {
-        if let Ok(gt) = global_transforms.get(entity) {
-            let gt_transform = gt.compute_transform();
+        commands.entity(entity).remove_parent();
+
+        if let Ok((mut cubie, mut transform)) = cubies.get_mut(entity) {
+            // Compute final global transform directly:
+            // global = pivot_rotation * local (pivot is at origin with default scale)
+            let final_rotation = pivot_rotation * transform.rotation;
+            let final_translation = pivot_rotation * transform.translation;
+
             // Snap position to grid
             let snapped = Vec3::new(
-                gt_transform.translation.x.round(),
-                gt_transform.translation.y.round(),
-                gt_transform.translation.z.round(),
+                final_translation.x.round(),
+                final_translation.y.round(),
+                final_translation.z.round(),
             );
 
-            commands.entity(entity).remove_parent();
+            transform.translation = snapped;
+            transform.rotation = snap_rotation(final_rotation);
 
-            if let Ok((mut cubie, mut transform)) = cubies.get_mut(entity) {
-                transform.translation = snapped;
-                // Snap rotation to nearest axis-aligned orientation to prevent
-                // floating-point drift accumulating over many moves (especially scramble).
-                transform.rotation = snap_rotation(gt_transform.rotation);
-
-                // Update grid position on the component
-                cubie.grid_position = IVec3::new(
-                    snapped.x as i32,
-                    snapped.y as i32,
-                    snapped.z as i32,
-                );
-            }
+            // Update grid position on the component
+            cubie.grid_position = IVec3::new(
+                snapped.x as i32,
+                snapped.y as i32,
+                snapped.z as i32,
+            );
         }
     }
 

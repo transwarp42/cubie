@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use bevy::render::mesh::Meshable;
 use std::collections::HashMap;
 use std::f32::consts::{FRAC_PI_2, PI};
 
@@ -7,23 +6,25 @@ use super::model::*;
 
 const CUBIE_SIZE: f32 = 0.9;
 const STICKER_SIZE: f32 = 0.82;
+const STICKER_THICKNESS: f32 = 0.01;
 const STICKER_ELEVATION: f32 = 0.005;
 
 /// Calculate the local transform of a sticker relative to the cubie center.
+/// Stickers are thin cuboids positioned on each face.
 fn sticker_transform(dir: FaceDirection) -> Transform {
-    let offset = CUBIE_SIZE / 2.0 + STICKER_ELEVATION;
+    let offset = CUBIE_SIZE / 2.0 + STICKER_THICKNESS / 2.0 + STICKER_ELEVATION;
     match dir {
         FaceDirection::Right => Transform::from_xyz(offset, 0.0, 0.0)
-            .with_rotation(Quat::from_rotation_y(FRAC_PI_2)),
+            .with_rotation(Quat::from_rotation_z(-FRAC_PI_2)),
         FaceDirection::Left => Transform::from_xyz(-offset, 0.0, 0.0)
-            .with_rotation(Quat::from_rotation_y(-FRAC_PI_2)),
-        FaceDirection::Up => Transform::from_xyz(0.0, offset, 0.0)
-            .with_rotation(Quat::from_rotation_x(-FRAC_PI_2)),
+            .with_rotation(Quat::from_rotation_z(FRAC_PI_2)),
+        FaceDirection::Up => Transform::from_xyz(0.0, offset, 0.0),
         FaceDirection::Down => Transform::from_xyz(0.0, -offset, 0.0)
+            .with_rotation(Quat::from_rotation_z(PI)),
+        FaceDirection::Front => Transform::from_xyz(0.0, 0.0, offset)
             .with_rotation(Quat::from_rotation_x(FRAC_PI_2)),
-        FaceDirection::Front => Transform::from_xyz(0.0, 0.0, offset),
         FaceDirection::Back => Transform::from_xyz(0.0, 0.0, -offset)
-            .with_rotation(Quat::from_rotation_y(PI)),
+            .with_rotation(Quat::from_rotation_x(-FRAC_PI_2)),
     }
 }
 
@@ -36,7 +37,7 @@ pub fn spawn_cube(
 ) {
     // Shared meshes
     let body_mesh = meshes.add(Cuboid::new(CUBIE_SIZE, CUBIE_SIZE, CUBIE_SIZE));
-    let sticker_mesh = meshes.add(Rectangle::new(STICKER_SIZE, STICKER_SIZE));
+    let sticker_mesh = meshes.add(Cuboid::new(STICKER_SIZE, STICKER_THICKNESS, STICKER_SIZE));
 
     // Material for the black cubie body — unlit for consistent color
     let body_material = materials.add(StandardMaterial {
@@ -60,8 +61,6 @@ pub fn spawn_cube(
             materials.add(StandardMaterial {
                 base_color: color.to_color(),
                 unlit: true,
-                double_sided: true,
-                cull_mode: None,
                 ..default()
             }),
         );
