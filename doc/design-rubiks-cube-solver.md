@@ -71,14 +71,14 @@ Dit proces is alleen deterministisch als materiaal-kleuren stabiel zijn. PBR zou
 - Introduceer `SolveQueue` resource: status (Idle/Scanning/Active) + `VecDeque<CubeMove>`
 - Introduceer `ScanAnimation` resource: tracking voor visuele "fotografeer" effect + beginpositie
 - Implementeer scan-animatie met 3 fases:
-  1. **Scan faces**: Roteer hele kubus om elke zijde te tonen (6 × 0.4s = 2.4s)
+  1. **Scan faces**: Beweeg camera orthogonaal voor elke zijde (6 × 0.5s = 3.0s)
   2. **Camera flash**: Wit flash-effect bij elke zijde (6 × 150ms)
-  3. **Return to start**: Draai kubus terug naar beginpositie (0.4s)
+  3. **Return to start**: Beweeg camera terug naar beginpositie (0.5s)
 - Implementeer `process_solve_queue`: popt moves en start animaties met `ActionOrigin::Solve`
 - Modificeer `finish_face_rotation`: bij `ActionOrigin::Solve` → wél naar history schrijven (anders dan scramble)
 
 **Risico's**:
-- Scan + return + solve duurt lang (2.4s scan + 0.4s return + 20 moves @ 0.3s = 8.8+ seconden). Mitigatie: visueel interessant, gebruiker ziet progressie.
+- Scan + return + solve duurt lang (3.0s scan + 0.5s return + 20 moves @ 0.3s = 9.5+ seconden). Mitigatie: visueel interessant, gebruiker ziet progressie.
 - Return-to-start slerp kan visueel onnatuurlijk zijn bij grote rotaties. Mitigatie: ease-out cubic voor smooth interpolatie.
 - Gebruiker klikt undo tijdens scan → blokkering via status check.
 
@@ -145,7 +145,7 @@ UI marker component: `SolveButton`. Bestaande `Cubie` en `Sticker` volstaan voor
 | Resource | Doel |
 |----------|------|
 | `SolveQueue` | Bevat de lijst solve-moves nog af te spelen, plus status (Idle/Scanning/Active) |
-| `ScanAnimation` | Tracking voor visuele scan-animatie: welke zijde, elapsed time, pivot entity, flash state, camera entity, opgeslagen camera positie en orbit state, return-to-start state |
+| `ScanAnimation` | Tracking voor visuele scan-animatie: welke zijde, elapsed time, flash state, opgeslagen orbit state (yaw/pitch/distance), from_yaw/from_pitch voor smooth interpolatie, return-to-start state |
 
 ### Systems
 
@@ -153,10 +153,10 @@ UI marker component: `SolveButton`. Bestaande `Cubie` en `Sticker` volstaan voor
 |--------|---------------------|
 | `spawn_solve_button` | Solve-knop spawnen + FlashOverlay UI element (Startup) |
 | `handle_solve_input` | Knop klik detectie → zet status naar Scanning |
-| `start_scan_animation` | Start scan-animatie: creëer pivot, reparent alle cubies, sla camera positie en orbit state op |
-| `animate_scan` | Animeer scan: (1) Beweeg camera naar frontale positie voor elke zijde (6 faces × 0.4s), trigger flash bij 90%; (2) Na face 6: beweeg camera terug naar opgeslagen positie (0.4s) |
+| `start_scan_animation` | Start scan-animatie: sla camera orbit state (yaw, pitch, distance) op als beginpositie |
+| `animate_scan` | Animeer scan: beweeg camera orthogonaal voor elke zijde (6 faces × 0.5s), trigger flash bij 90%; na face 6: beweeg camera terug naar opgeslagen orbit positie (0.5s) |
 | `animate_camera_flash` | Animeer wit flash-overlay: fade in (50ms) + fade out (100ms) bij elke zijde |
-| `finish_scan_animation` | Wacht tot camera return compleet → herstel orbit state, read visual state, run solver, vul queue, zet status naar Active |
+| `finish_scan_animation` | Wacht tot camera return compleet → herstel orbit state exact (snap), read visual state, run solver, vul queue, zet status naar Active |
 | `process_solve_queue` | Pakt volgende move uit queue, start animatie met `ActionOrigin::Solve` |
 | `finish_solve` | Na lege queue: zet status naar Idle |
 | `update_solve_button` | Visuele enable/disable van knop op basis van states |
@@ -302,18 +302,20 @@ Alle errors zijn "graceful": geen panics, geen crashes. Knop blijft functioneel.
 
 [Scan Animation Start]
     → start_scan_animation
-        leest: SolveQueue.status == Scanning, ScanAnimation.active
+        leest: SolveQueue.status == Scanning, ScanAnimation.active, OrbitCamera
         schrijft: ScanAnimation.active = true
-                  ScanAnimation.pivot_entity = pivot (reparent alle 27 cubies)
-                  ScanAnimation.initial_rotation = Quat::IDENTITY (beginpositie)
+                  ScanAnimation.saved_orbit_state = (yaw, pitch, distance)
+                  ScanAnimation.from_yaw = orbit.yaw (beginpositie)
+                  ScanAnimation.from_pitch = orbit.pitch
 
-[Per frame tijdens scan — 6 zijden × 0.4s]
+[Per frame tijdens scan — 6 zijden × 0.5s]
     → animate_scan
-        leest: Time, ScanAnimation (current_face, elapsed)
-        schrijft: Transform van pivot (roteer om zijde te tonen)
+        leest: Time, ScanAnimation (current_face, elapsed, from_yaw, from_pitch)
+        schrijft: OrbitCamera.yaw/pitch (ease-in-out cubic naar FACE_YAW[i]/FACE_PITCH[i])
+                  Camera Transform (positie berekend uit orbit, look_at Vec3::ZERO)
                   ScanAnimation.elapsed += delta
                   Bij 90%: flash_triggered = true, flash_active = true
-                  ScanAnimation.current_face++ (na voltooiing van elke face)
+                  Na voltooiing: from_yaw/from_pitch = target, current_face++
     
     → animate_camera_flash (parallel)
         leest: ScanAnimation.flash_active, flash_elapsed
@@ -321,17 +323,20 @@ Alle errors zijn "graceful": geen panics, geen crashes. Knop blijft functioneel.
                   FlashOverlay Visibility (show/hide)
                   Bij 150ms: flash_active = false
 
-[Na face 6 — return to start × 0.4s]
+[Na face 6 — return to start × 0.5s]
     → animate_scan (continue)
         leest: current_face >= 6
         schrijft: returning_to_start = true, elapsed = 0
-        leest: Time, last face rotation
-        schrijft: Transform van pivot (slerp terug naar initial_rotation via ease-out cubic)
-                  ScanAnimation.elapsed += delta
+                  from_yaw = FACE_YAW[5], from_pitch = FACE_PITCH[5]
+        leest: Time, saved_orbit_state
+        schrijft: OrbitCamera.yaw/pitch (ease-in-out cubic terug naar saved state)
+                  Camera Transform (positie + look_at)
 
-[Return voltooid — kubus terug op beginpositie]
+[Return voltooid — camera terug op beginpositie]
     → finish_scan_animation
         leest: ScanAnimation.returning_to_start == true, elapsed >= duration
+        schrijft: OrbitCamera exact op saved_orbit_state (snap)
+                  Camera Transform (exact op opgeslagen positie)
         roept: cubies_to_face_string()
             └→ detect_center_mapping()  // voor layer 0 rotaties
             └→ sticker_color_to_rcuber_char_mapped()
@@ -341,7 +346,7 @@ Alle errors zijn "graceful": geen panics, geen crashes. Knop blijft functioneel.
         roept: rcuber_move_to_cube_moves()         // mapping
         schrijft: SolveQueue.moves = solution
                   SolveQueue.status = Active (of Idle als geen moves)
-                  ScanAnimation = reset (deparent cubies, despawn pivot)
+                  ScanAnimation = reset
 
 [Per frame tijdens solve]
     → process_solve_queue
@@ -478,42 +483,40 @@ Voor elke positie: vind de sticker wiens `current_direction` matcht de verwachte
 
 **3-Fase Process:**
 
-1. **Face Scanning (2.4s totaal)**
-   - 6 faces × 0.4s per face
-   - **Dubbele animatie**: kubus roteert EN camera beweegt
+1. **Face Scanning (3.0s totaal)**
+   - 6 faces × 0.5s per face
+   - **Camera-only animatie**: de kubus roteert niet; alleen de camera beweegt
    - Bij 90% completion: trigger camera flash (150ms wit overlay)
-   - **Per face:**
-     - Front: geen rotatie, camera op (0, 0, 5) - dichtbij frontaal
-     - Right: Y-as +90°, camera op (5, 0, 0) - rechterzijde frontaal
-     - Back: Y-as 180°, camera op (0, 0, -5) - achterkant frontaal
-     - Left: Y-as -90°, camera op (-5, 0, 0) - linkerzijde frontaal
-     - Top: X-as -90°, camera op (0, 5, 0) - bovenkant frontaal
-     - Bottom: X-as +90°, camera op (0, -5, 0) - onderkant frontaal
-   - Camera beweegt dichter bij kubus (afstand 5 i.p.v. orbit ~8)
+   - **Camera yaw/pitch targets per face** (afstand blijft constant, geen zoom):
+     - Front (Z+): yaw=0, pitch=0
+     - Right (X+): yaw=+90°, pitch=0
+     - Back (Z-): yaw=180°, pitch=0
+     - Left (X-): yaw=-90°, pitch=0
+     - Up (Y+): yaw=0, pitch=+89.4° (bijna verticaal)
+     - Down (Y-): yaw=0, pitch=-89.4°
    - Camera kijkt altijd naar centrum (Vec3::ZERO)
+   - Smooth ease-in-out cubic interpolatie tussen posities
    - Orbit camera system is geblokkeerd tijdens scanning
 
-2. **Return to Start (0.4s)**
-   - Na face 6 (Bottom): kubus slerpt terug naar identity rotatie
-   - Camera lerpt terug naar opgeslagen orbit positie
-   - Orbit state (yaw, pitch, distance) wordt hersteld
-   - Smooth interpolatie met ease-out cubic
-   
+2. **Return to Start (0.5s)**
+   - Na face 6 (Down): camera interrpoleert terug naar opgeslagen orbit positie
+   - Orbit state (yaw, pitch, distance) wordt exact hersteld (snap op einde)
+   - Smooth ease-in-out cubic interpolatie
+    
 3. **Solver Execution**
    - Start alleen NA complete return
-   - Kubus staat op identity rotatie
    - Camera staat weer in orbit positie zoals voor scan
    - Orbit camera system wordt weer geactiveerd
    - Visual state extraction leest correcte transforms
 
-**Waarom combinatie van kubus rotatie EN camera beweging?**
-- **Maximale zichtbaarheid**: Elke face wordt naar camera gedraaid én camera komt dichterbij
-- **Frontale 2D view**: Camera op afstand 5 geeft duidelijke close-up van elke zijde
-- **Duidelijke beweging**: Zowel kubus als camera bewegen → visueel interessanter
-- **Orbit blocking**: Camera control wordt tijdelijk overgenomen tijdens scan
+**Waarom alleen camera bewegen (geen kubus rotatie)?**
+- **Zuivere 2D weergave**: Bij orthogonale camerastand is slechts één zijde zichtbaar; andere zijden zijn op 90° en vallen buiten beeld
+- **Geen reparenting overhead**: Geen pivot entity, geen ouder-kind aanpassing van 27 cubies
+- **Constante afstand**: Alleen yaw/pitch veranderen, distance blijft intact (geen zoom)
+- **Simpeler state**: Geen `initial_rotation`, `pivot_entity` of cubie reparenting nodig
 
 **Waarom return-to-start?**
-- Voorkomt verwarring: alles terug naar beginpositie
+- Voorkomt verwarring: camera terug naar beginpositie
 - Consistentie: solve-animatie start met bekende setup
 - Visuele continuïteit: gebruiker ziet duidelijk einde van scan-fase
 

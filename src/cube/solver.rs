@@ -34,15 +34,13 @@ pub struct ScanAnimation {
     pub current_face: usize,
     pub elapsed: f32,
     pub duration_per_face: f32,
-    pub pivot_entity: Option<Entity>,
-    pub flash_triggered: bool,  // Of flash al is getriggerd voor huidige face
-    pub flash_active: bool,      // Of flash momenteel actief is
-    pub flash_elapsed: f32,      // Verstreken tijd voor flash animatie
-    pub initial_rotation: Quat,  // Beginpositie van de kubus
+    pub flash_triggered: bool,   // Of flash al is getriggerd voor huidige face
+    pub flash_active: bool,       // Of flash momenteel actief is
+    pub flash_elapsed: f32,       // Verstreken tijd voor flash animatie
     pub returning_to_start: bool, // Of we terug aan het draaien zijn naar start
-    pub camera_entity: Option<Entity>, // Camera entity om te verplaatsen
-    pub saved_camera_position: Vec3,   // Opgeslagen camera positie
     pub saved_orbit_state: Option<(f32, f32, f32)>, // (yaw, pitch, distance)
+    pub from_yaw: f32,            // Camera yaw aan begin van huidige transitie
+    pub from_pitch: f32,          // Camera pitch aan begin van huidige transitie
 }
 
 impl Default for ScanAnimation {
@@ -51,19 +49,36 @@ impl Default for ScanAnimation {
             active: false,
             current_face: 0,
             elapsed: 0.0,
-            duration_per_face: 0.4, // 0.4s per zijde
-            pivot_entity: None,
+            duration_per_face: 0.5, // 0.5s per zijde
             flash_triggered: false,
             flash_active: false,
             flash_elapsed: 0.0,
-            initial_rotation: Quat::IDENTITY,
             returning_to_start: false,
-            camera_entity: None,
-            saved_camera_position: Vec3::ZERO,
             saved_orbit_state: None,
+            from_yaw: 0.0,
+            from_pitch: 0.0,
         }
     }
 }
+
+/// Camera yaw/pitch targets for each face (perpendicular view, no other faces visible).
+/// Front(Z+), Right(X+), Back(Z-), Left(X-), Up(Y+), Down(Y-)
+const FACE_YAW: [f32; 6] = [
+    0.0,
+    std::f32::consts::FRAC_PI_2,
+    std::f32::consts::PI,
+    -std::f32::consts::FRAC_PI_2,
+    0.0,
+    0.0,
+];
+const FACE_PITCH: [f32; 6] = [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    std::f32::consts::FRAC_PI_2 - 0.01,
+    -(std::f32::consts::FRAC_PI_2 - 0.01),
+];
 
 /// Marker component for the camera flash overlay.
 #[derive(Component)]
@@ -302,124 +317,95 @@ fn sticker_color_to_rcuber_char_mapped(
 
 /// System: start scanning animation when solve is initiated.
 pub fn start_scan_animation(
-    mut commands: Commands,
     mut solve: ResMut<SolveQueue>,
     mut scan: ResMut<ScanAnimation>,
-    cubies: Query<Entity, With<Cubie>>,
-    mut camera_query: Query<(Entity, &Transform, &OrbitCamera)>,
+    camera_query: Query<&OrbitCamera>,
 ) {
     if solve.status != SolveStatus::Scanning || scan.active {
         return;
     }
 
-    // Save camera state
-    if let Ok((cam_entity, cam_transform, orbit)) = camera_query.get_single_mut() {
-        scan.camera_entity = Some(cam_entity);
-        scan.saved_camera_position = cam_transform.translation;
+    // Save current camera orbit state so we can restore it afterwards
+    if let Ok(orbit) = camera_query.get_single() {
         scan.saved_orbit_state = Some((orbit.yaw, orbit.pitch, orbit.distance));
-    }
-
-    // Create pivot for all cubies (whole cube rotation)
-    let pivot = commands
-        .spawn((
-            RotationPivot,
-            Transform::default(),
-            Visibility::default(),
-        ))
-        .id();
-
-    // Reparent all cubies to pivot
-    for entity in &cubies {
-        commands.entity(entity).set_parent(pivot);
+        scan.from_yaw = orbit.yaw;
+        scan.from_pitch = orbit.pitch;
     }
 
     scan.active = true;
     scan.current_face = 0;
     scan.elapsed = 0.0;
-    scan.pivot_entity = Some(pivot);
     scan.flash_triggered = false;
     scan.flash_active = false;
     scan.flash_elapsed = 0.0;
-    scan.initial_rotation = Quat::IDENTITY; // Beginpositie (pivot start altijd op IDENTITY)
     scan.returning_to_start = false;
 }
 
-/// System: animate scanning through each face.
+/// System: animate scanning through each face by moving the camera.
 pub fn animate_scan(
     time: Res<Time>,
     mut scan: ResMut<ScanAnimation>,
-    mut transforms: Query<&mut Transform>,
+    mut camera_query: Query<(&mut OrbitCamera, &mut Transform)>,
 ) {
     if !scan.active {
         return;
     }
 
-    let Some(pivot) = scan.pivot_entity else {
+    let Ok((mut orbit, mut cam_tf)) = camera_query.get_single_mut() else {
         return;
     };
 
     scan.elapsed += time.delta_secs();
-
-    // Define cube rotations to bring each face towards camera
-    // Camera blijft op originele orbit positie - geen beweging
-    let face_rotations: [(Vec3, f32); 6] = [
-        (Vec3::ZERO, 0.0),                                    // Front: no rotation
-        (Vec3::Y, std::f32::consts::FRAC_PI_2),              // Right: Y 90°
-        (Vec3::Y, std::f32::consts::PI),                     // Back: Y 180°
-        (Vec3::Y, -std::f32::consts::FRAC_PI_2),             // Left: Y -90°
-        (Vec3::X, -std::f32::consts::FRAC_PI_2),             // Top: X -90°
-        (Vec3::X, std::f32::consts::FRAC_PI_2),              // Bottom: X 90°
-    ];
+    let t = (scan.elapsed / scan.duration_per_face).min(1.0);
+    // Ease-in-out cubic
+    let t_eased = if t < 0.5 {
+        4.0 * t * t * t
+    } else {
+        1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
+    };
 
     // Check if we're returning to start position
     if scan.returning_to_start {
-        let t = (scan.elapsed / scan.duration_per_face).min(1.0);
-        let t_eased = 1.0 - (1.0 - t).powi(3);
-
-        // Get last face rotation
-        let (last_axis, last_angle) = face_rotations[5];
-        let from_rotation = if last_axis == Vec3::ZERO {
-            Quat::IDENTITY
-        } else {
-            Quat::from_axis_angle(last_axis, last_angle)
-        };
-
-        // Interpolate cube back to identity
-        if let Ok(mut pivot_tf) = transforms.get_mut(pivot) {
-            pivot_tf.rotation = from_rotation.slerp(Quat::IDENTITY, t_eased);
+        if let Some((saved_yaw, saved_pitch, saved_dist)) = scan.saved_orbit_state {
+            orbit.yaw = scan.from_yaw + (saved_yaw - scan.from_yaw) * t_eased;
+            orbit.pitch = scan.from_pitch + (saved_pitch - scan.from_pitch) * t_eased;
+            orbit.distance = saved_dist;
         }
-
-        // Camera stays at original position - no return movement needed
-
+        let pos = Vec3::new(
+            orbit.distance * orbit.pitch.cos() * orbit.yaw.sin(),
+            orbit.distance * orbit.pitch.sin(),
+            orbit.distance * orbit.pitch.cos() * orbit.yaw.cos(),
+        );
+        cam_tf.translation = pos;
+        cam_tf.look_at(Vec3::ZERO, Vec3::Y);
         return;
     }
 
-    if scan.current_face >= face_rotations.len() {
-        // All faces done, start returning to start
+    if scan.current_face >= FACE_YAW.len() {
         if !scan.returning_to_start {
             scan.returning_to_start = true;
             scan.elapsed = 0.0;
+            // Save current (last face) yaw/pitch as starting point for return
+            scan.from_yaw = FACE_YAW[FACE_YAW.len() - 1];
+            scan.from_pitch = FACE_PITCH[FACE_PITCH.len() - 1];
         }
         return;
     }
 
-    let (axis, angle) = face_rotations[scan.current_face];
-    let t = (scan.elapsed / scan.duration_per_face).min(1.0);
+    let target_yaw = FACE_YAW[scan.current_face];
+    let target_pitch = FACE_PITCH[scan.current_face];
 
-    // Ease-out cubic for smooth animation
-    let t_eased = 1.0 - (1.0 - t).powi(3);
+    orbit.yaw = scan.from_yaw + (target_yaw - scan.from_yaw) * t_eased;
+    orbit.pitch = scan.from_pitch + (target_pitch - scan.from_pitch) * t_eased;
+    // Distance stays constant (no zoom)
 
-    // Rotate cube to show face
-    if let Ok(mut pivot_tf) = transforms.get_mut(pivot) {
-        if axis == Vec3::ZERO {
-            pivot_tf.rotation = Quat::IDENTITY;
-        } else {
-            pivot_tf.rotation = Quat::from_axis_angle(axis, angle * t_eased);
-        }
-    }
-
-    // Camera stays at original orbit position - no movement
-
+    let pos = Vec3::new(
+        orbit.distance * orbit.pitch.cos() * orbit.yaw.sin(),
+        orbit.distance * orbit.pitch.sin(),
+        orbit.distance * orbit.pitch.cos() * orbit.yaw.cos(),
+    );
+    cam_tf.translation = pos;
+    cam_tf.look_at(Vec3::ZERO, Vec3::Y);
 
     // Trigger flash when face is fully visible (90% through animation)
     if t >= 0.9 && !scan.flash_triggered {
@@ -431,6 +417,8 @@ pub fn animate_scan(
     // Move to next face when current animation completes
     if scan.elapsed >= scan.duration_per_face {
         scan.elapsed = 0.0;
+        scan.from_yaw = target_yaw;
+        scan.from_pitch = target_pitch;
         scan.current_face += 1;
         scan.flash_triggered = false; // Reset voor volgende face
     }
@@ -486,36 +474,28 @@ pub fn animate_camera_flash(
 
 /// System: finish scanning and start solving.
 pub fn finish_scan_animation(
-    mut commands: Commands,
     mut solve: ResMut<SolveQueue>,
     mut scan: ResMut<ScanAnimation>,
+    mut camera_query: Query<(&mut OrbitCamera, &mut Transform), Without<Cubie>>,
     cubies_query: Query<(&Cubie, &Transform, &Children)>,
-    cubies_entity: Query<Entity, With<Cubie>>,
     stickers: Query<&Sticker>,
-    mut camera_query: Query<(&mut Transform, &mut OrbitCamera), Without<Cubie>>,
 ) {
-    // Wait until all faces are scanned AND we're back at start position
-    if !scan.active {
+    if !scan.active || !scan.returning_to_start {
         return;
-    }
-
-    if !scan.returning_to_start {
-        return; // Still scanning faces
     }
 
     // Check if return animation is complete
     if scan.elapsed < scan.duration_per_face {
-        return; // Still returning to start
+        return;
     }
 
-    // Return animation complete - restore camera state
+    // Snap camera exactly to saved orbit state
     if let Some((yaw, pitch, distance)) = scan.saved_orbit_state {
-        if let Ok((mut cam_tf, mut orbit)) = camera_query.get_single_mut() {
+        if let Ok((mut orbit, mut cam_tf)) = camera_query.get_single_mut() {
             orbit.yaw = yaw;
             orbit.pitch = pitch;
             orbit.distance = distance;
 
-            // Recalculate camera position from orbit
             cam_tf.translation = Vec3::new(
                 distance * pitch.cos() * yaw.sin(),
                 distance * pitch.sin(),
@@ -523,16 +503,6 @@ pub fn finish_scan_animation(
             );
             cam_tf.look_at(Vec3::ZERO, Vec3::Y);
         }
-    }
-
-    // Clean up pivot
-    if let Some(pivot) = scan.pivot_entity {
-
-        for entity in &cubies_entity {
-            commands.entity(entity).remove_parent();
-        }
-
-        commands.entity(pivot).despawn();
     }
 
     // Reset scan state
@@ -544,7 +514,6 @@ pub fn finish_scan_animation(
         solve.moves = moves;
         solve.status = SolveStatus::Active;
     } else {
-        // No moves needed (already solved or error)
         solve.status = SolveStatus::Idle;
     }
 }
