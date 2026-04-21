@@ -10,6 +10,7 @@ pub enum ActionOrigin {
     Undo,
     Redo,
     Scramble,
+    Solve,
 }
 
 /// Ease-out cubic: 1 - (1 - t)^3

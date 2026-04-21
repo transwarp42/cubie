@@ -3,6 +3,7 @@ use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
 
 use crate::cube::input::{DragPhase, DragState};
+use crate::cube::solver::{SolveQueue, SolveStatus};
 
 /// Orbit camera component for rotating around the cube.
 #[derive(Component)]
@@ -52,10 +53,17 @@ pub fn orbit_camera_system(
     mut mouse_motion: EventReader<MouseMotion>,
     mut query: Query<(&mut OrbitCamera, &mut Transform)>,
     drag_state: Res<DragState>,
+    solve_queue: Res<SolveQueue>,
 ) {
     let Ok((mut orbit, mut transform)) = query.get_single_mut() else {
         return;
     };
+
+    // Block orbit updates during scanning
+    if solve_queue.status == SolveStatus::Scanning {
+        mouse_motion.clear();
+        return;
+    }
 
     // Only allow orbit when no cube interaction is happening
     let allow_orbit = matches!(drag_state.phase, DragPhase::Idle);

@@ -52,29 +52,15 @@ pub struct RedoButton;
 
 /// Spawn undo/redo buttons in the top-right corner.
 pub fn spawn_undo_redo_buttons(mut commands: Commands) {
-    // Container in top-right corner using flex layout
+    // Undo button
     commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px(10.0),
-            right: Val::Px(120.0),
-            column_gap: Val::Px(6.0),
-            ..default()
-        })
-        .with_children(|parent| {
-            // Redo button (leftmost)
-            spawn_history_button(parent, RedoButton, "Redo");
-            // Undo button
-            spawn_history_button(parent, UndoButton, "Undo");
-        });
-}
-
-fn spawn_history_button(parent: &mut ChildBuilder, marker: impl Component, label: &str) {
-    parent
         .spawn((
-            marker,
+            UndoButton,
             Button,
             Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(10.0),
+                right: Val::Px(130.0),
                 padding: UiRect::all(Val::Px(8.0)),
                 border: UiRect::all(Val::Px(1.0)),
                 ..default()
@@ -85,15 +71,38 @@ fn spawn_history_button(parent: &mut ChildBuilder, marker: impl Component, label
         ))
         .with_children(|btn| {
             btn.spawn((
-                Text::new(label),
-                TextFont {
-                    font_size: 14.0,
-                    ..default()
-                },
+                Text::new("Undo"),
+                TextFont { font_size: 14.0, ..default() },
+                TextColor(Color::srgba(1.0, 1.0, 1.0, 0.4)),
+            ));
+        });
+
+    // Redo button
+    commands
+        .spawn((
+            RedoButton,
+            Button,
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(10.0),
+                right: Val::Px(188.0),
+                padding: UiRect::all(Val::Px(8.0)),
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            BorderColor(Color::srgba(1.0, 1.0, 1.0, 0.3)),
+            BorderRadius::all(Val::Px(4.0)),
+            BackgroundColor(Color::srgba(0.2, 0.2, 0.25, 0.4)),
+        ))
+        .with_children(|btn| {
+            btn.spawn((
+                Text::new("Redo"),
+                TextFont { font_size: 14.0, ..default() },
                 TextColor(Color::srgba(1.0, 1.0, 1.0, 0.4)),
             ));
         });
 }
+
 
 /// System: handle undo/redo button clicks and keyboard shortcuts.
 /// When triggered, starts a rotation animation via the same pipeline.

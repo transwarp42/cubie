@@ -185,7 +185,7 @@ pub fn finish_face_rotation(
 
     // Update undo/redo stacks based on action origin
     match animation.origin {
-        ActionOrigin::Regular => {
+        ActionOrigin::Regular | ActionOrigin::Solve => {
             history.push_action(mv);
         }
         ActionOrigin::Undo | ActionOrigin::Redo | ActionOrigin::Scramble => {
